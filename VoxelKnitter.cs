@@ -6,6 +6,8 @@ using UnityEngine;
 
 public class VoxelKnitter : MonoBehaviour {
 
+	//TODO navigation when off grid
+
 	[SerializeField] float delay = 0;
 	[SerializeField] Vector3 BoundCentre;
 	[SerializeField] Vector3 BoundExtents;
@@ -153,8 +155,9 @@ public class VoxelKnitter : MonoBehaviour {
 					nodes[j].AddNeighbour(nodes[i]);
 				}
 			foreach(var item in nodes) {
-				if(navNodes.Contains(item)) { //if the node is already in the main list, just add neighbours
-					int index = navNodes.IndexOf(item);
+				//if the node is already in the main list, just add neighbours
+				if(navNodes.Any((x) => item.position == x.position)) {
+					int index = navNodes.FindIndex((x) => item.position == x.position);
 					foreach(var neighbour in item.neighbours)
 						navNodes[index].AddNeighbour(neighbour);
 				}
@@ -167,9 +170,9 @@ public class VoxelKnitter : MonoBehaviour {
 
 	bool KnitStep(AAPrism current, Axis axis, float posneg) {
 		current.Expand(axis, posneg*VoxelSize);
-		current.Contract(VoxelSize*.1f); //This is a little hack to prevent coplanar hits
+		current.Contract(VoxelSize*.1f); //This is a little hack to prevent coplanar hits along non-expanding sides
 		//we have to make sure to expand again before exiting
-		foreach(var point in current.GetCorners()) //check if we hit the outside bounds
+		foreach(var point in current.GetCorners()) //check if we hit the outside bounds //TODO only do max and min?
 			if(!bounds.Contains(point)) {
 				current.Expand(VoxelSize*.1f);
 				current.Contract(axis, posneg*VoxelSize);
@@ -181,76 +184,25 @@ public class VoxelKnitter : MonoBehaviour {
 				current.Expand(VoxelSize*.1f);
 				current.Contract(axis, posneg*VoxelSize);
 				//calculate points of intersection and log the neighbour relation
-				Vector3 min = new Vector3(Mathf.Max(item.bounds.min.x, current.bounds.min.x),
-										  Mathf.Max(item.bounds.min.y, current.bounds.min.y),
-										  Mathf.Max(item.bounds.min.z, current.bounds.min.z));
-				Vector3 max = new Vector3(Mathf.Min(item.bounds.max.x, current.bounds.max.x),
-										  Mathf.Min(item.bounds.max.y, current.bounds.max.y),
-										  Mathf.Min(item.bounds.max.z, current.bounds.max.z));
-				if(min == max) {//intersection is a single point
-					current.AddNeighbour(item, new List<Vector3> { max });
-					item.AddNeighbour(current, new List<Vector3> { max });
-				}
-				Vector3 diff = max - min;
-				if(diff.x < 1e-5 || diff.y < 1e-5 || diff.z < 1e-5) {//merge points on the zero dist. axes
-					float[] xvals = diff.x < 1e-5 ? new[] { min.x } : new[] { min.x, max.x };
-					float[] yvals = diff.y < 1e-5 ? new[] { min.y } : new[] { min.y, max.y };
-					float[] zvals = diff.z < 1e-5 ? new[] { min.z } : new[] { min.z, max.z };
-					List<Vector3> points = new List<Vector3>();
-					foreach(var x in xvals)
-						foreach(var y in yvals)
-							foreach(var z in zvals)
-								points.Add(new Vector3(x, y, z));
-					current.AddNeighbour(item, points);
-					item.AddNeighbour(current, points);
-				}
-				else {
-					//something is wrong, intersection is a box
-					Debug.Log("Prism intersection is box!");
-				}
+				List<Vector3> points = current.DetermineIntersectionPoints(item);
+				current.AddNeighbour(item, points);
+				item.AddNeighbour(current, points);
 				return false;
 			}
 		}
 		current.Expand(VoxelSize*.1f);
 
-		if(current.Intersects) { //We hit an object, time to stop
+		if(current.Intersects) { //check if we hit an object
 			current.Contract(axis, posneg*VoxelSize);
 			return false;
 		}
-		else { //growth continues, remove all covered seeds
+		else { //no intersections so growth continues, remove all covered seeds
 			Bounds b = current.bounds;
 			seeds.RemoveAll(item => b.Contains(item.centre));
 			return true;
 		}
 	}
 
-	struct NeighbourInfo{
-		public AAPrism prism;
-		public float distance;
-		public List<Vector3> vertices;
-
-		public NeighbourInfo(AAPrism item, float dist, List<Vector3> points) {
-			prism = item;
-			distance = dist;
-			vertices = points;
-		}
-
-		//public static bool operator ==(NeighbourInfo l, NeighbourInfo r) {
-		//	return l.prism.Equals(r.prism) && l.distance == r.distance;
-		//}
-
-		//public static bool operator !=(NeighbourInfo l, NeighbourInfo r) {
-		//	return l.distance != r.distance;
-		//}
-
-		public override bool Equals(object o) {
-			if(o == null) return false;
-			if(o.GetType() == typeof(NeighbourInfo))
-				return ((NeighbourInfo)o).prism.Equals(prism) && ((NeighbourInfo)o).distance == distance;
-			else
-				return false;
-		}
-	}
 
 	void AStarPath() {
 		AAPrism s = null, f = null;
@@ -277,7 +229,7 @@ public class VoxelKnitter : MonoBehaviour {
 
 	List<Vector3> AStarPath(Vector3 s, Vector3 f) {
 		AAPrism startPrism = null, endPrism = null;
-		List<NavNode> list = new List<NavNode>(navNodes);
+		List<NavNode> list = new List<NavNode>(navNodes); //copy the list so we can modify it non-destructively
 		foreach(var prism in a) { //find the containing prism for start and finish
 			if(prism.bounds.Contains(s)) {
 				prism.Display(Color.green);
@@ -311,10 +263,15 @@ public class VoxelKnitter : MonoBehaviour {
 		List<Vector3> path = new List<Vector3>();
 		if(PathSearch(startNode, endNode)) {
 			Debug.Log("Path found!");
-			//path = ReturnPath(endNode);
+			path = ReturnPath(endNode);
 			for(int i = 0; i < path.Count - 1; i++) {
-				DebugExtension.DrawPoint(path[i], Color.magenta, .5f);
-				Debug.DrawLine(path[i], path[i + 1], Color.red);
+				//DebugExtension.DebugPoint(path[i], Color.magenta, .5f);
+				Debug.DrawLine(path[i], path[i + 1], Color.cyan);
+			}
+			SmoothPath(path);
+			for(int i = 0; i < path.Count - 1; i++) {
+				//DebugExtension.DebugPoint(path[i], Color.magenta, .5f);
+				Debug.DrawLine(path[i], path[i + 1], Color.yellow);
 			}
 		}
 		else
@@ -322,13 +279,37 @@ public class VoxelKnitter : MonoBehaviour {
 		return path;
 	}
 
-	List<Vector3> ReturnPath(NavNode f) {  //WARNING this loop is infinite
-		List<Vector3> list = new List<Vector3>();
-		do {
-			list.Add(f.position);
-		} while(f.parent != null);
+	List<Vector3> ReturnPath(NavNode f) {
+		NavNode currentNode = f;
+		List<Vector3> list = new List<Vector3> { currentNode.position };
+		for(int i = 0; i < 100; i++) {
+			if(currentNode.parent == null)
+				break;
+			currentNode = currentNode.parent;
+			list.Add(currentNode.position);
+		}
+		list.Reverse();
 		return list;
 	}
+
+	void SmoothPath(List<Vector3> path) {
+		//Raycast from current point to each other in turn (starting from end)
+		//If path is clear remove intervening points
+		//repeat
+		//TODO use funnel algo instead
+		for(int i = 0; i < path.Count - 2; i++) {
+			for(int j = path.Count - 1; j > i + 1; j--) {
+				Vector3 dir = path[j] - path[i];
+				Ray ray = new Ray(path[i], dir);
+				float dist = dir.magnitude;
+				if(!Physics.Raycast(ray, dist)) {
+					path.RemoveRange(i + 1, j - i - 1); //remove all points between i and j
+					j = path.Count - 1; //reset j to the new last point
+				}
+			}
+		}
+	}
+
 
 	bool PathSearch(NavNode current, NavNode finish) {
 		current.state = NodeState.Closed;
@@ -453,25 +434,6 @@ public class VoxelKnitter : MonoBehaviour {
 			}
 		}
 
-		//public static bool operator ==(NavNode l, NavNode r) {
-		//	if(ReferenceEquals(l, null))
-		//		return ReferenceEquals(r, null);
-		//	return l.position == r.position;
-		//}
-
-		//public static bool operator !=(NavNode l, NavNode r) {
-		//	return !(l == r);
-		//}
-
-		public override bool Equals(object obj) {
-			if(obj == null) return false;
-			return obj is NavNode && this == (NavNode)obj;
-		}
-
-		public override int GetHashCode() {
-			return position.GetHashCode();
-		}
-
 		public struct NavNodeNeighbour
 		{
 			public NavNode node;
@@ -481,16 +443,6 @@ public class VoxelKnitter : MonoBehaviour {
 				node = neighbour;
 				distance = (original.position - node.position).sqrMagnitude;
 			}
-
-			//public static bool operator ==(NavNodeNeighbour l, NavNodeNeighbour r) {
-			//	if(ReferenceEquals(l, null))
-			//		return ReferenceEquals(r, null);
-			//	return l.node == r.node;
-			//}
-
-			//public static bool operator !=(NavNodeNeighbour l, NavNodeNeighbour r) {
-			//	return !(l == r);
-			//}
 
 			public override bool Equals(object obj) {
 				if(obj == null) return false;
@@ -502,6 +454,7 @@ public class VoxelKnitter : MonoBehaviour {
 			}
 		}
 	}
+
 
 	class AAPrism {
 		public Vector3 centre, Size; //full size of edge
@@ -618,9 +571,35 @@ public class VoxelKnitter : MonoBehaviour {
 		public List<Vector3> GetAllPoints() {
 			List<Vector3> points = GetCorners().ToList();
 			foreach(var item in neighbours)
-				foreach(var point in item.vertices)
+				foreach(var point in item.intersectionPoints)
 					points.Add(point);
 			return points.Distinct().ToList();
+		}
+
+		public List<Vector3> DetermineIntersectionPoints(AAPrism other) {
+			List<Vector3> points = new List<Vector3>();
+			Vector3 min = new Vector3(Mathf.Max(bounds.min.x, other.bounds.min.x),
+									  Mathf.Max(bounds.min.y, other.bounds.min.y),
+									  Mathf.Max(bounds.min.z, other.bounds.min.z));
+			Vector3 max = new Vector3(Mathf.Min(bounds.max.x, other.bounds.max.x),
+									  Mathf.Min(bounds.max.y, other.bounds.max.y),
+									  Mathf.Min(bounds.max.z, other.bounds.max.z));
+			//TODO check for no intersection case
+			Vector3 diff = max - min;
+			//merge points on the zero dist. axes
+			float[] xvals = Mathf.Abs(diff.x) < 1e-5 ? new[] { min.x } : new[] { min.x, max.x };
+			float[] yvals = Mathf.Abs(diff.y) < 1e-5 ? new[] { min.y } : new[] { min.y, max.y };
+			float[] zvals = Mathf.Abs(diff.z) < 1e-5 ? new[] { min.z } : new[] { min.z, max.z };
+			foreach(var x in xvals)
+				foreach(var y in yvals)
+					foreach(var z in zvals)
+						points.Add(new Vector3(x, y, z));
+			
+			if(points.Count > 4) { //something is wrong, intersection is > 2 dimensional
+				Debug.Log("Prism intersection is box!");
+			}
+
+			return points;
 		}
 
 		public void AddNeighbour(AAPrism neighbour, List<Vector3> points) {
@@ -634,6 +613,29 @@ public class VoxelKnitter : MonoBehaviour {
 			neighbours.Add(n);
 		}
 	}
+
+
+	struct NeighbourInfo
+	{
+		public AAPrism prism;
+		public float distance;
+		public List<Vector3> intersectionPoints;
+
+		public NeighbourInfo(AAPrism item, float dist, List<Vector3> points) {
+			prism = item;
+			distance = dist;
+			intersectionPoints = points;
+		}
+
+		public override bool Equals(object obj) {
+			if(obj == null) return false;
+			if(obj.GetType() == typeof(NeighbourInfo))
+				return ((NeighbourInfo)obj).prism.Equals(prism) && ((NeighbourInfo)obj).distance == distance;
+			else
+				return false;
+		}
+	}
+
 
 	public enum Axis { x, y, z }
 }
