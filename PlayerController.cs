@@ -8,8 +8,10 @@ public class PlayerController : MonoBehaviour {
 	//http://sal.aalto.fi/publications/pdf-files/eluu11_public.pdf
 	//http://andrew.gibiansky.com/blog/physics/quadcopter-dynamics/
 
-	[SerializeField] InputManager inputManager; //The player input for the frame
-	InputManager.FrameInput input;
+	//[SerializeField] IDroneInput inputManager; //control input source
+	[SerializeField] BotController inputManager;
+	//[SerializeField] InputManager inputManager;
+	FrameInput input; //The input for the frame
 
 	[SerializeField] Propeller[] props = new Propeller[4];
 	[SerializeField] float baseThrottlePercent = .02f, maxThrottlePercent = .9f;
@@ -21,8 +23,8 @@ public class PlayerController : MonoBehaviour {
 	float throttle = 0;
 	ControlMode flightMode = ControlMode.STAB;
 	bool baroMode = true;
-	[SerializeField] float setAltitude = 1;
-	float setYaw {
+	public float setAltitude = 1;
+	public float setYaw {
 		get { return _setYaw; }
 		set { _setYaw = value > 180 ? value - 360 : value < -180 ? value + 360 : value; }
 	}
@@ -37,16 +39,16 @@ public class PlayerController : MonoBehaviour {
 	}
 
 	//TODO These have limits as they always return the smallest angle (never reflex)
-	float Pitch { get { return -(Vector3.Angle(transform.right, Physics.gravity) - 90); } }
-	float Roll { get { return -(Vector3.Angle(transform.forward, Physics.gravity) - 90); } }
-	float Yaw { get {
+	public float Pitch { get { return -(Vector3.Angle(transform.right, Physics.gravity) - 90); } }
+	public float Roll { get { return -(Vector3.Angle(transform.forward, Physics.gravity) - 90); } }
+	public float Yaw { get {
 			Vector3 proj = Vector3.ProjectOnPlane(transform.right, Vector3.up);
 			float angle = Vector3.Angle(proj, Vector3.right);
 			return Vector3.Angle(proj, Vector3.back) < 90 ? angle : -angle;
 		}
 	}
 
-	float Altitude { get { return transform.position.y; } } //TODO Modify this to dist over terrain?
+	public float Altitude { get { return transform.position.y; } } //TODO Modify this to dist over terrain?
 
 	//mode angular rates in deg/s
 	float ACRO_PITCH_RATE = 70;
@@ -70,7 +72,7 @@ public class PlayerController : MonoBehaviour {
 		foreach(PIDs item in Enum.GetValues(typeof(PIDs))) {
 			pids.Add(item, new PID());
 		}
-		//TODO adjust these lol
+		//TODO adjust these
 		pids[PIDs.PITCH_RATE].kP = 3.0f;
 		pids[PIDs.PITCH_RATE].kI = 0.00f;
 		pids[PIDs.PITCH_RATE].imax = 10;
@@ -98,7 +100,7 @@ public class PlayerController : MonoBehaviour {
 	}
 
 	void Update () {
-		input = inputManager.currentInput;
+		input = inputManager.CurrentInput;
 		if(flightMode != input.FlightMode) {
 			if(input.FlightMode == ControlMode.STAB)
 				setYaw = Yaw; //if turning stab mode on, set yaw to current
@@ -193,81 +195,5 @@ public class PlayerController : MonoBehaviour {
 		ROLL_STAB,
 		YAW_STAB,
 		BARO
-	}
-
-	class PID {
-		public float P, I, D;
-		public float kP, kI, kD, imax;
-		float integrator, lastError, lastDerivative, lastT;
-		int fCut; //frequency cutoff for derivative lowpass filter
-
-		public PID(float initialP = 0, float initialI = 0, float initialD = 0, float initialMax = 0) {
-			kP = initialP;
-			kI = initialI;
-			kD = initialD;
-			imax = initialMax;
-			lastT = 0;
-			fCut = 20;
-			integrator = 0;
-			lastError = lastDerivative = float.NaN;
-			P = I = D = 0;
-		}
-
-		public float GetPID(float error, float scalar = 1) {
-			float dt = Time.time - lastT; //TODO check about using this class for dt calcs
-
-			float output = 0;
-			if(float.IsNaN(lastT) || dt > 1) { //in seconds
-				dt = 0;
-				ResetI();
-			}
-
-			lastT = Time.time;
-
-			//P
-			P = error*kP;
-			output += P;
-
-			//D
-			if(Mathf.Abs(kD) > 0 && dt > 0) {
-				float derivative;
-
-				if(float.IsNaN(lastDerivative)) {
-					derivative = 0;
-					lastDerivative = 0;
-				}
-				else
-					derivative = (error - lastError)/dt;
-
-
-				float RC = 1/(2*Mathf.PI*fCut);
-				derivative = lastDerivative + ((dt/(RC + dt))*(derivative - lastDerivative));
-
-				lastError = error;
-				lastDerivative = derivative;
-
-				D = kD*derivative;
-				output += D;
-			}
-
-			output *= scalar;
-			P *= scalar;
-			D *= scalar;
-
-			//I
-			if(Mathf.Abs(kI) > 0 && dt > 0) {
-				integrator += (error*kI)*scalar*dt;
-				I = Mathf.Clamp(integrator, -imax, imax);
-				output += I;
-			}
-
-			return output;
-		}
-
-		void ResetI() {
-			integrator = 0;
-			lastDerivative = float.NaN;
-			I = 0;
-		}
 	}
 }

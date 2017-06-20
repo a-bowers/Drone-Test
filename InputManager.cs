@@ -3,28 +3,16 @@ using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UI;
 
-public class InputManager : MonoBehaviour {
+public class InputManager : MonoBehaviour, IDroneInput {
 	public enum InputDevice
 	{
 		Keyboard,
 		Controller
 	}
 
-	public struct FrameInput
-	{
-		public float Pitch, Yaw, Roll, Throttle;
-		public ControlMode FlightMode;
-		public bool BaroMode;
-
-		public void Reset() {
-			Pitch = Yaw = Roll = Throttle = 0;
-			FlightMode = ControlMode.STAB;
-			BaroMode = true;
-		}
-	}
-
 	InputDevice inputDevice = InputDevice.Controller;
-	public FrameInput currentInput;
+	public FrameInput CurrentInput { get { return currentInput; } }
+	FrameInput currentInput;
 	Vector3 mouseOrigin;
 	[SerializeField] Image MouseOriginPic;
 	[SerializeField] float PitchSensitivity = 1;
