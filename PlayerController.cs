@@ -49,6 +49,7 @@ public class PlayerController : MonoBehaviour {
 	}
 
 	public float Altitude { get { return transform.position.y; } } //TODO Modify this to dist over terrain?
+	public Vector3 Velocity { get { return rb.velocity; } }
 
 	//mode angular rates in deg/s
 	float ACRO_PITCH_RATE = 70;
@@ -114,7 +115,7 @@ public class PlayerController : MonoBehaviour {
 
 		Vector3 currentGyro = Mathf.Rad2Deg*transform.InverseTransformDirection(rb.angularVelocity);
 		currentGyro.z = -currentGyro.z;
-		velocityText.text = "(" + rb.velocity.x + ", " + rb.velocity.z + ")\nVert.: " + rb.velocity.y;
+		velocityText.text = "(" + Velocity.x + ", " + Velocity.z + ")\nVert.: " + Velocity.y;
 		orientationText.text =  "Actual: " + Altitude + "\nSet: "+ setAltitude + "\nPitch: "
 			+ Pitch + "\nRoll: " + Roll + "\nYaw: " + Yaw + "\nSet: " + setYaw;
 
@@ -130,6 +131,7 @@ public class PlayerController : MonoBehaviour {
 		//calculate output of PIDs
 		float pitchOut = 0, rollOut = 0, yawOut = 0;
 
+		//TODO FIXME yaw turning (stopping specifically) causes altitude gain in stab mode
 		if(flightMode == ControlMode.STAB) {
 			//FIXME get these values working so that they can wrap with the pids //Not necessary except for exceptional cases
 			float pitch_stab_output = pids[PIDs.PITCH_STAB].GetPID(input.Pitch*STAB_PITCH_MAX - Pitch, 1f);
