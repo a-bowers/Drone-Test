@@ -9,8 +9,8 @@ public class PlayerController : MonoBehaviour {
 	//http://andrew.gibiansky.com/blog/physics/quadcopter-dynamics/
 
 	//[SerializeField] IDroneInput inputManager; //control input source
-	[SerializeField] BotController inputManager;
-	//[SerializeField] InputManager inputManager;
+	//[SerializeField] BotController inputManager;
+	[SerializeField] InputManager inputManager;
 	FrameInput input; //The input for the frame
 
 	[SerializeField] Propeller[] props = new Propeller[4];
@@ -52,10 +52,10 @@ public class PlayerController : MonoBehaviour {
 	public Vector3 Velocity { get { return rb.velocity; } }
 
 	//mode angular rates in deg/s
-	float ACRO_PITCH_RATE = 70;
-	float ACRO_ROLL_RATE = 70;
-	float ACRO_YAW_RATE = 200;
-	float STAB_YAW_RATE = 400;
+	float ACRO_PITCH_RATE = 70f;
+	float ACRO_ROLL_RATE = 70f;
+	float ACRO_YAW_RATE = 200f;
+	float STAB_YAW_RATE = 400f;
 
 	//STAB mode maximum angles in deg
 	float STAB_PITCH_MAX = 60;
@@ -67,8 +67,10 @@ public class PlayerController : MonoBehaviour {
 		rb = GetComponent<Rigidbody>();
 		rb.maxAngularVelocity = 50;
 
-		baseThrottle = props[0].GetComponent<Propeller>().MaxSpeed*baseThrottlePercent;
-		maxThrottle = props[0].GetComponent<Propeller>().MaxSpeed*maxThrottlePercent;
+		setYaw = Yaw;
+
+		baseThrottle = props[0].MaxSpeed*baseThrottlePercent;
+		maxThrottle = props[0].MaxSpeed*maxThrottlePercent;
 
 		foreach(PIDs item in Enum.GetValues(typeof(PIDs))) {
 			pids.Add(item, new PID());
@@ -134,16 +136,16 @@ public class PlayerController : MonoBehaviour {
 		//TODO FIXME yaw turning (stopping specifically) causes altitude gain in stab mode
 		if(flightMode == ControlMode.STAB) {
 			//FIXME get these values working so that they can wrap with the pids //Not necessary except for exceptional cases
+			//TODO Autolevel if upside-down in stab mode
 			float pitch_stab_output = pids[PIDs.PITCH_STAB].GetPID(input.Pitch*STAB_PITCH_MAX - Pitch, 1f);
 			float roll_stab_output = pids[PIDs.ROLL_STAB].GetPID(input.Roll*STAB_ROLL_MAX - Roll, 1f);
 			float yaw_stab_output;
 			if(input.Yaw != 0) {
 				yaw_stab_output = input.Yaw*STAB_YAW_RATE;
-				setYaw = Yaw;
+				setYaw = Yaw; //TODO change this to be ahead by an amount depending on the turn rate to remove slingshotting
 			} else {
 				yaw_stab_output = pids[PIDs.YAW_STAB].GetPID(AngleDifference180(Yaw, setYaw), 1f);
 			}
-			debugText.text = "X: " + input.Roll + "\nY: " + input.Pitch;
 
 			pitchOut = pids[PIDs.PITCH_RATE].GetPID(currentGyro.z - pitch_stab_output, 1f);
 			rollOut = pids[PIDs.ROLL_RATE].GetPID(currentGyro.x - roll_stab_output, 1f);
@@ -155,7 +157,10 @@ public class PlayerController : MonoBehaviour {
 			yawOut = pids[PIDs.YAW_RATE].GetPID(currentGyro.y - input.Yaw*ACRO_YAW_RATE, 1f);
 		}
 
+		debugText.text = "X: " + input.Roll + "\nY: " + input.Pitch;
 		throttleText.text = "Throttle: " + throttle + " PitchOut: " + pitchOut + " RollOut: " + rollOut + " YawOut: " + yawOut;
+
+		//Mixer
 
 		//	  ^
 		//	  |
@@ -164,19 +169,28 @@ public class PlayerController : MonoBehaviour {
 		//	3	0
 		//
 
+		float[][] mixTable = {
+			new float[] { 1.00f, 1.00f, 1.00f, -1.00f },
+			new float[] { 1.00f, 1.00f, -1.00f, 1.00f },
+			new float[] { 1.00f, -1.00f, -1.00f, -1.00f },
+			new float[] { 1.00f, -1.00f, 1.00f, 1.00f },
+		};
+
 		float[] thrust = new float[4];
 		//y tilts forewards and back, x left and right
 
-		if(throttle > baseThrottle) {
-			thrust[0] = throttle + rollOut + pitchOut - yawOut;
-			thrust[1] = throttle + rollOut - pitchOut + yawOut;
-			thrust[2] = throttle - rollOut - pitchOut - yawOut;
-			thrust[3] = throttle - rollOut + pitchOut + yawOut;
-			mousePosText.text = thrust[2] + "\t\t" + thrust[1] + "\n" + thrust[3] + "\t\t" + thrust[0];
-		}
-		else {
-			thrust[0] = thrust[1] = thrust[2] = thrust[3] = 0;
-		}
+		// if(throttle > baseThrottle) {
+			for(int i = 0; i < 4; i++) {
+				float[] mix = mixTable[i];
+				thrust[i] = mix[0]*throttle + mix[1]*rollOut + mix[2]*pitchOut + mix[3]*yawOut;
+			}
+			mousePosText.text = string.Format("{0:F3}\t\t{1:F3}\n{0:F3}\t\t{1:F3}",
+				thrust[2]/props[2].MaxSpeed, thrust[1]/props[1].MaxSpeed,
+				thrust[3]/props[3].MaxSpeed, thrust[0]/props[0].MaxSpeed);
+		// }
+		// else {
+		// 	thrust[0] = thrust[1] = thrust[2] = thrust[3] = 0;
+		// }
 
 		for(int i = 0; i < props.Length; i++) { //Set RPM of each propeller
 			props[i].SetSpeed(thrust[i]);
