@@ -17,8 +17,7 @@ public class BotController : MonoBehaviour, IDroneInput {
 			return waypointList[waypointIndex + 1].transform.position;
 		}
 	}
-	//Vector3 nextWaypoint { get { return waypoint.transform.position; } } //For testing
-	[SerializeField] GameObject waypoint;
+	bool WaypointReached { get { return (drone.transform.position - NextWaypoint).sqrMagnitude < tolerance*tolerance; } }
 
 	Dictionary<PIDs, PID> pids = new Dictionary<PIDs, PID>();
 	float tolerance = 1f; //waypoint tolerance in m
@@ -44,7 +43,7 @@ public class BotController : MonoBehaviour, IDroneInput {
 	
 	void Update () {
 		if(!tracking) return;
-		if(WaypointReached())
+		if(WaypointReached)
 			if(++waypointIndex > waypointList.Count - 1)
 				waypointIndex = 0; //reset the index if it reaches the end of the list
 
@@ -63,7 +62,6 @@ public class BotController : MonoBehaviour, IDroneInput {
 		//Vector3 addedVector = Vector3.ClampMagnitude(SecondNextWaypoint - NextWaypoint, 2.5f)*Mathf.Clamp01(1 - proj.magnitude/4);
 		//Vector3 diff = (proj + 2*proj.normalized + addedVector);
 
-		//Vector3 addedVector = (SecondNextWaypoint - NextWaypoint).normalized*Mathf.Clamp01(1 - proj.magnitude/4);
 		Vector3 diff = proj.normalized*4;
 		diff -= Vector3.ProjectOnPlane(drone.Velocity, Vector3.up);
 		diff = drone.transform.InverseTransformDirection(diff);
@@ -75,21 +73,10 @@ public class BotController : MonoBehaviour, IDroneInput {
 
 	}
 
-	bool WaypointReached() {
-		return (drone.transform.position - NextWaypoint).sqrMagnitude < tolerance*tolerance;
-	}
-
-	float AngleDifference180(float a, float b) {
-		a = b - a;
-		a += a > 180 ? -360 : a < -180 ? 360 : 0;
-		return a;
-	}
-
 	enum PIDs
 	{
 		PITCH,
 		ROLL,
-		YAW,
 		THRUST
 	}
 }

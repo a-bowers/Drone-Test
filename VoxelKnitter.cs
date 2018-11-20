@@ -7,6 +7,9 @@ using UnityEngine;
 public class VoxelKnitter : MonoBehaviour {
 
 	//TODO navigation when off grid
+	//TODO path search can still fail...
+	//TODO cull small areas/reorganize to optimize count
+	//Neighbours on the first prism
 
 	[SerializeField] float delay = 0;
 	[SerializeField] Vector3 BoundCentre;
@@ -24,6 +27,7 @@ public class VoxelKnitter : MonoBehaviour {
 
 	[SerializeField] GameObject start; //to move around for debugging
 	[SerializeField] GameObject finish; //to move around for debugging
+	[SerializeField] int num1 = 0, num2 = 1; //for debug
 
 	void Start () {
 		bounds = new Bounds(BoundCentre, BoundExtents*2);
@@ -86,23 +90,25 @@ public class VoxelKnitter : MonoBehaviour {
 			item.Update();
 		}
 		foreach(var item in navNodes) {
-			item.Update();
+			//item.Update();
 		}
 		//navNodes[58].DisplayNeighbours(0);
 
 		if(knitDone) {
-		//int num = 0;
-		//a[num].Display(Color.white);
-		//foreach(var item in a[num].neighbours) {
-		//	item.prism.Display(Color.green);
-		//}
+			var point = a[num1].DetermineIntersectionPoints(a[num2]);
+			Debug.Log(a[num1].bounds.max.x);
+			//Debug.Log(a[num1].bounds.min);
+			//Debug.Log(a[num2].bounds.max);
+			Debug.Log(a[num2].bounds.min.x);
+			foreach(var item in point) {
+				DebugExtension.DebugPoint(item, Color.magenta, .5f, 0);
+			}
 			AStarPath(start.transform.position, finish.transform.position); //pathfind from start to finish
 		}
 	}
 
 	IEnumerator Knit() {
-		//choose voxel and start growing
-		//when edge hit, stop that edge
+		//choose voxel and start growing; when edge hit, stop that edge
 		Debug.Log("Beginning knit");
 		while(seeds.Count > 0) {
 			Debug.Log("Seeds Remaining: " + seeds.Count);
@@ -143,8 +149,11 @@ public class VoxelKnitter : MonoBehaviour {
 			}
 			if(delay != 0) yield return new WaitForSeconds(delay);
 		}
-		//set up navnodes
-		foreach(var prism in a) {
+		foreach(var prism in a)
+			foreach(var neighbour in prism.neighbours) //calculate neighbour intersection points
+				neighbour.AddIntersectionPoints(prism.DetermineIntersectionPoints(neighbour.prism));
+
+		foreach(var prism in a) { //set up navnodes
 			prism.drawn = false;
 			List<NavNode> nodes = new List<NavNode>();
 			foreach(var point in prism.GetAllPoints())
@@ -183,10 +192,9 @@ public class VoxelKnitter : MonoBehaviour {
 			if(item.bounds.Intersects(current.bounds)) {
 				current.Expand(VoxelSize*.1f);
 				current.Contract(axis, posneg*VoxelSize);
-				//calculate points of intersection and log the neighbour relation
-				List<Vector3> points = current.DetermineIntersectionPoints(item);
-				current.AddNeighbour(item, points);
-				item.AddNeighbour(current, points);
+				//log the neighbour relation
+				current.AddNeighbour(item);
+				item.AddNeighbour(current);
 				return false;
 			}
 		}
@@ -198,17 +206,16 @@ public class VoxelKnitter : MonoBehaviour {
 		}
 		else { //no intersections so growth continues, remove all covered seeds
 			Bounds b = current.bounds;
-			seeds.RemoveAll(item => b.Contains(item.centre));
+			seeds.RemoveAll(item => b.Contains(item.Centre)); //TODO change to just intersection? (can't be full sized)
 			return true;
 		}
 	}
-
 
 	void AStarPath() {
 		AAPrism s = null, f = null;
 
 		foreach(var item in a) {
-			item.H = (item.centre - finish.transform.position).sqrMagnitude;
+			item.H = (item.Centre - finish.transform.position).sqrMagnitude;
 			item.parent = null;
 			item.state = NodeState.Untested;
 			if(item.bounds.Contains(start.transform.position)) {
@@ -231,7 +238,7 @@ public class VoxelKnitter : MonoBehaviour {
 		AAPrism startPrism = null, endPrism = null;
 		List<NavNode> list = new List<NavNode>(navNodes); //copy the list so we can modify it non-destructively
 		foreach(var prism in a) { //find the containing prism for start and finish
-			if(prism.bounds.Contains(s)) {
+			if(prism.bounds.Contains(s)) { //TODO optimize with sort and end loop
 				prism.Display(Color.green);
 				startPrism = prism;
 			}
@@ -241,6 +248,9 @@ public class VoxelKnitter : MonoBehaviour {
 			}
 		}
 		//TODO add nullchecking on prisms to see if off grid
+		if(startPrism == endPrism) { //if they are in the same prism then we can travel direct
+			return new List<Vector3> { s, f };
+		}
 		NavNode startNode = new NavNode(s); //add start and finish to list
 		NavNode endNode = new NavNode(f);
 		list.Add(startNode);
@@ -256,21 +266,21 @@ public class VoxelKnitter : MonoBehaviour {
 			endNode.AddNeighbour(node);
 		}
 		foreach(var item in list) {//prepare to pathfind
-			item.H = (item.position - endNode.position).sqrMagnitude;
+			item.H = (item.position - endNode.position).sqrMagnitude; //TODO use regular mag to stop exponent growth?
 			item.parent = null;
 			item.state = NodeState.Untested;
 		}
 		List<Vector3> path = new List<Vector3>();
-		if(PathSearch(startNode, endNode)) {
+		if(PathSearch(startNode, endNode)) { //pathfind
 			Debug.Log("Path found!");
 			path = ReturnPath(endNode);
 			for(int i = 0; i < path.Count - 1; i++) {
-				//DebugExtension.DebugPoint(path[i], Color.magenta, .5f);
+				DebugExtension.DebugPoint(path[i], Color.magenta, .5f);
 				Debug.DrawLine(path[i], path[i + 1], Color.cyan);
 			}
 			SmoothPath(path);
 			for(int i = 0; i < path.Count - 1; i++) {
-				//DebugExtension.DebugPoint(path[i], Color.magenta, .5f);
+				DebugExtension.DebugPoint(path[i], Color.magenta, .5f);
 				Debug.DrawLine(path[i], path[i + 1], Color.yellow);
 			}
 		}
@@ -282,7 +292,7 @@ public class VoxelKnitter : MonoBehaviour {
 	List<Vector3> ReturnPath(NavNode f) {
 		NavNode currentNode = f;
 		List<Vector3> list = new List<Vector3> { currentNode.position };
-		for(int i = 0; i < 100; i++) {
+		for(int i = 0; i < navNodes.Count; i++) {
 			if(currentNode.parent == null)
 				break;
 			currentNode = currentNode.parent;
@@ -297,7 +307,7 @@ public class VoxelKnitter : MonoBehaviour {
 		//If path is clear remove intervening points
 		//repeat
 		//TODO use funnel algo instead
-		for(int i = 0; i < path.Count - 2; i++) {
+		for(int i = 0; i < path.Count - 1; i++) {
 			for(int j = path.Count - 1; j > i + 1; j--) {
 				Vector3 dir = path[j] - path[i];
 				Ray ray = new Ray(path[i], dir);
@@ -457,10 +467,12 @@ public class VoxelKnitter : MonoBehaviour {
 
 
 	class AAPrism {
-		public Vector3 centre, Size; //full size of edge
+		public Vector3 Centre { get { return (Vector3)((max - min)/2 + min); } } 
+		public Vector3 Size { get { return (Vector3)(max - min); } } //full size of edge
+		public Vector3d min, max;
 		public bool drawn = true, isSeed = true;
-		public bool Intersects { get { return Physics.CheckBox(centre, Size/2f, Quaternion.identity, layer); } }
-		public Bounds bounds { get { return new Bounds(centre, Size); } }
+		public bool Intersects { get { return Physics.CheckBox(Centre, Size/2f, Quaternion.identity, layer); } }
+		public Bounds bounds { get { return new Bounds(Centre, Size); } }
 		int layer;
 
 		//pathfinding stuff
@@ -473,24 +485,24 @@ public class VoxelKnitter : MonoBehaviour {
 		public List<NeighbourInfo> neighbours = new List<NeighbourInfo>();
 
 		public AAPrism(Vector3 loc, Vector3 dims, int navlayer) {
-			centre = loc;
-			Size = dims;
+			max = new Vector3d(loc + dims/2);
+			min = new Vector3d(loc - dims/2);
 			layer = 1 << navlayer;
 		}
 
 		public void Expand(Axis a, float amount) {
 			if(amount == 0) return;
 			if(a == Axis.x) {
-				centre.x += amount/2f;
-				Size.x += Mathf.Abs(amount);
+				if(amount > 0) max.x += amount;
+				else min.x += amount;
 			}
 			else if(a == Axis.y) {
-				centre.y += amount/2f;
-				Size.y += Mathf.Abs(amount);
+				if(amount > 0) max.y += amount;
+				else min.y += amount;
 			}
 			else if(a == Axis.z) {
-				centre.z += amount/2f;
-				Size.z += Mathf.Abs(amount);
+				if(amount > 0) max.z += amount;
+				else min.z += amount;
 			}
 		}
 
@@ -503,16 +515,16 @@ public class VoxelKnitter : MonoBehaviour {
 		public void Contract(Axis a, float amount) {
 			if(amount == 0) return;
 			if(a == Axis.x) {
-				centre.x -= amount/2f;
-				Size.x -= Mathf.Abs(amount);
+				if(amount > 0) max.x -= amount;
+				else min.x -= amount;
 			}
 			else if(a == Axis.y) {
-				centre.y -= amount/2f;
-				Size.y -= Mathf.Abs(amount);
+				if(amount > 0) max.y -= amount;
+				else min.y -= amount;
 			}
 			else if(a == Axis.z) {
-				centre.z -= amount/2f;
-				Size.z -= Mathf.Abs(amount);
+				if(amount > 0) max.z -= amount;
+				else min.z -= amount;
 			}
 		}
 
@@ -533,7 +545,7 @@ public class VoxelKnitter : MonoBehaviour {
 
 		public void Display(float duration) {
 			if(isSeed) { //If still a seed show a purple centrepoint instead
-				DebugExtension.DebugPoint(centre, Color.magenta, .3f, duration: duration);
+				DebugExtension.DebugPoint(Centre, Color.magenta, .3f, duration: duration);
 				return;
 			}
 			Color colour = Intersects ? Color.red : Color.white;
@@ -542,6 +554,9 @@ public class VoxelKnitter : MonoBehaviour {
 				Debug.DrawLine(locations[i], locations[i % 2 == 0 ? i + 1 : i - 1], colour, duration);
 				Debug.DrawLine(locations[i], locations[i < 4 ? i + 4 : i - 4], colour, duration);
 				Debug.DrawLine(locations[i], locations[i % 5 == 0 ? i + 2 : i - 2], colour, duration);
+			}
+			foreach(var item in neighbours) {
+				Debug.DrawLine(Centre, item.prism.Centre, Color.red, duration);
 			}
 		}
 
@@ -563,7 +578,7 @@ public class VoxelKnitter : MonoBehaviour {
 				location.x = i % 2 == 0 ? -x : x;
 				location.y = i >= 4 ? y : -y;
 				location.z = i < 2 || i > 3 && i < 6 ? z : -z;
-				locations[i] = centre + location;
+				locations[i] = Centre + location;
 			}
 			return locations;
 		}
@@ -577,19 +592,25 @@ public class VoxelKnitter : MonoBehaviour {
 		}
 
 		public List<Vector3> DetermineIntersectionPoints(AAPrism other) {
+			double maxDelta = 1e-5;
 			List<Vector3> points = new List<Vector3>();
+			
 			Vector3 min = new Vector3(Mathf.Max(bounds.min.x, other.bounds.min.x),
 									  Mathf.Max(bounds.min.y, other.bounds.min.y),
 									  Mathf.Max(bounds.min.z, other.bounds.min.z));
 			Vector3 max = new Vector3(Mathf.Min(bounds.max.x, other.bounds.max.x),
 									  Mathf.Min(bounds.max.y, other.bounds.max.y),
 									  Mathf.Min(bounds.max.z, other.bounds.max.z));
-			//TODO check for no intersection case
 			Vector3 diff = max - min;
 			//merge points on the zero dist. axes
-			float[] xvals = Mathf.Abs(diff.x) < 1e-5 ? new[] { min.x } : new[] { min.x, max.x };
-			float[] yvals = Mathf.Abs(diff.y) < 1e-5 ? new[] { min.y } : new[] { min.y, max.y };
-			float[] zvals = Mathf.Abs(diff.z) < 1e-5 ? new[] { min.z } : new[] { min.z, max.z };
+			float[] xvals = Mathf.Abs(diff.x) < maxDelta ? new[] { min.x } : new[] { min.x, max.x };
+			float[] yvals = Mathf.Abs(diff.y) < maxDelta ? new[] { min.y } : new[] { min.y, max.y };
+			float[] zvals = Mathf.Abs(diff.z) < maxDelta ? new[] { min.z } : new[] { min.z, max.z };
+
+			if(!bounds.Intersects(other.bounds)) { //check no intersection case
+				Debug.Log("No intersection");
+				//return points;
+			}
 			foreach(var x in xvals)
 				foreach(var y in yvals)
 					foreach(var z in zvals)
@@ -607,15 +628,21 @@ public class VoxelKnitter : MonoBehaviour {
 			foreach(var item in points)
 				average += item;
 			average /= points.Count;
-			float d1 = (centre - average).sqrMagnitude, d2 = (neighbour.centre - average).sqrMagnitude;
+			float d1 = (Centre - average).sqrMagnitude, d2 = (neighbour.Centre - average).sqrMagnitude;
 			NeighbourInfo n = new NeighbourInfo(neighbour, d1 + d2, points);
+			if(neighbours.Contains(n)) return;
+			neighbours.Add(n);
+		}
+
+		public void AddNeighbour(AAPrism neighbour) {
+			NeighbourInfo n = new NeighbourInfo(neighbour);
 			if(neighbours.Contains(n)) return;
 			neighbours.Add(n);
 		}
 	}
 
 
-	struct NeighbourInfo
+	class NeighbourInfo
 	{
 		public AAPrism prism;
 		public float distance;
@@ -627,10 +654,18 @@ public class VoxelKnitter : MonoBehaviour {
 			intersectionPoints = points;
 		}
 
+		public NeighbourInfo(AAPrism item) {
+			prism = item;
+		}
+
+		public void AddIntersectionPoints(List<Vector3> points) {
+			intersectionPoints = points;
+		}
+
 		public override bool Equals(object obj) {
 			if(obj == null) return false;
 			if(obj.GetType() == typeof(NeighbourInfo))
-				return ((NeighbourInfo)obj).prism.Equals(prism) && ((NeighbourInfo)obj).distance == distance;
+				return ((NeighbourInfo)obj).prism.Equals(prism);// && ((NeighbourInfo)obj).distance == distance;
 			else
 				return false;
 		}
