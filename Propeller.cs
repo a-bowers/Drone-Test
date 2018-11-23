@@ -13,6 +13,10 @@ public class Propeller : MonoBehaviour {
 		this.rpm = Mathf.Clamp(rpm, 0, MaxSpeed);
 	}
 
+	public void SetSpeedPercent(float percent) {
+		SetSpeed(percent*MaxSpeed);
+	}
+
 	public void ChangeSpeed(float delta) {
 		SetSpeed(rpm + delta);
 	}

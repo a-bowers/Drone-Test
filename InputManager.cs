@@ -19,7 +19,7 @@ public class InputManager : MonoBehaviour, IDroneInput {
 	[SerializeField] float RollSensitivity = 1;
 	[SerializeField] float YawSensitivity = 1;
 	[SerializeField] float ThrottleSensitivity = 1;
-	ControlMode flightMode = ControlMode.STAB;
+	ControlMode flightMode = ControlMode.ACRO;
 	bool baroMode = true;
 
 	void Start() {

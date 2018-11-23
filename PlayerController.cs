@@ -34,7 +34,7 @@ public class PlayerController : MonoBehaviour {
 		get {
 			float angleMod = Mathf.Cos(Mathf.Deg2Rad*Vector3.Angle(transform.up, -Physics.gravity));//Angle b/w up vector and world up
 			float force = rb.mass*Mathf.Abs(Physics.gravity.y)/angleMod; //The force/prop required to maintain altitude
-			return force/props[0].GetComponent<Propeller>().thrustMultiplier/props.Length; //transformed into rpm per prop
+			return force/props[0].thrustMultiplier/props.Length/props[0].MaxSpeed; //transformed into %MaxRPM per prop
 		}
 	}
 
@@ -68,7 +68,7 @@ public class PlayerController : MonoBehaviour {
 	float STAB_PITCH_MAX = 60;
 	float STAB_ROLL_MAX = 60;
 
-	float BARO_RATE = 7f; //Rate of change in m/s of altitude at full throttle in baro mode
+	float BARO_RATE = 10f; //Rate of change in m/s of altitude at full throttle in baro mode
 
 	void Start() {
 		rb = GetComponent<Rigidbody>();
@@ -83,31 +83,31 @@ public class PlayerController : MonoBehaviour {
 			pids.Add(item, new PID());
 		}
 		//TODO adjust these
-		pids[PIDs.PITCH_RATE].kP = 3.0f;
+		pids[PIDs.PITCH_RATE].kP = 0.0003f;
 		pids[PIDs.PITCH_RATE].kI = 0.00f;
 		pids[PIDs.PITCH_RATE].imax = 10;
 
-		pids[PIDs.ROLL_RATE].kP = 3.0f;
+		pids[PIDs.ROLL_RATE].kP = 0.0003f;
 		pids[PIDs.ROLL_RATE].kI = 0.00f;
 		pids[PIDs.ROLL_RATE].imax = 10;
 
-		pids[PIDs.YAW_RATE].kP = 3.0f;
+		pids[PIDs.YAW_RATE].kP = 0.001f;
 		pids[PIDs.YAW_RATE].kI = 0.00f;
 		//pids[PIDs.YAW_RATE].kD = 1.00f;
 		pids[PIDs.YAW_RATE].imax = 10;
 
-		pids[PIDs.PITCH_STAB].kP = 5f;
+		pids[PIDs.PITCH_STAB].kP = 4f;
 		pids[PIDs.PITCH_STAB].kD = .5f;
 
-		pids[PIDs.ROLL_STAB].kP = 5f;
+		pids[PIDs.ROLL_STAB].kP = 4f;
 		pids[PIDs.ROLL_STAB].kD = .5f;
 
-		pids[PIDs.YAW_STAB].kP = 50f;
+		pids[PIDs.YAW_STAB].kP = 40f;
 		pids[PIDs.YAW_STAB].kD = 20f;
 
-		pids[PIDs.BARO].kP = .5f;
-		pids[PIDs.BARO].kI = .0f;
-		pids[PIDs.BARO].kD = 1f;
+		pids[PIDs.BARO].kP = 0.09f;
+		pids[PIDs.BARO].kI = 0.00f;
+		pids[PIDs.BARO].kD = 0.08f;
 	}
 
 	void Update () {
@@ -140,13 +140,12 @@ public class PlayerController : MonoBehaviour {
 			if(Inverted)
 				throttle = 0; //No base throttle if flipped
 			else {
-				float pid = pids[PIDs.BARO].GetPID(setAltitude - Altitude , maxThrottle/20); //TODO why scaling factor?
-				throttle = Mathf.Clamp(hoverThrottle + pid, baseThrottle, maxThrottle);
+				float pid = pids[PIDs.BARO].GetPID(setAltitude - Altitude);
+				throttle = Mathf.Clamp(hoverThrottle + pid, 0, 1);
 			}
 		}
 		else
-			throttle = input.Throttle*maxThrottle;
-		//throttleText.text = " Throttle: " + throttle;
+			throttle = Mathf.Clamp(input.Throttle, 0, 1);
 
 		//Pitch, roll, and yaw PIDs
 		float pitchOut = 0, rollOut = 0, yawOut = 0;
@@ -197,21 +196,17 @@ public class PlayerController : MonoBehaviour {
 		float[] thrust = new float[4];
 		//y tilts forewards and back, x left and right
 
-		// if(throttle > baseThrottle) {
-			for(int i = 0; i < 4; i++) {
-				float[] mix = mixTable[i];
-				thrust[i] = mix[0]*throttle + mix[1]*rollOut + mix[2]*pitchOut + mix[3]*yawOut;
-			}
-			mousePosText.text = string.Format("{0:F3}\t\t{1:F3}\n{0:F3}\t\t{1:F3}",
-				thrust[2]/props[2].MaxSpeed, thrust[1]/props[1].MaxSpeed,
-				thrust[3]/props[3].MaxSpeed, thrust[0]/props[0].MaxSpeed);
-		// }
-		// else {
-		// 	thrust[0] = thrust[1] = thrust[2] = thrust[3] = 0;
-		// }
+		for(int i = 0; i < 4; i++) {
+			float[] mix = mixTable[i];
+			thrust[i] = Mathf.Clamp(mix[0]*throttle + mix[1]*rollOut + mix[2]*pitchOut + mix[3]*yawOut, 0, 1);
+		}
 
-		for(int i = 0; i < props.Length; i++) { //Set RPM of each propeller
-			props[i].SetSpeed(thrust[i]);
+		mousePosText.text = string.Format("{0:F3}\t\t{1:F3}\n{0:F3}\t\t{1:F3}",
+											thrust[2], thrust[1],
+											thrust[3], thrust[0]);
+
+		for(int i = 0; i < props.Length; i++) { //Set speed of each propeller
+			props[i].SetSpeedPercent(thrust[i]);
 		}
 	}
 
