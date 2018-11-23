@@ -38,24 +38,31 @@ public class PlayerController : MonoBehaviour {
 		}
 	}
 
-	//TODO These have limits as they always return the smallest angle (never reflex)
-	public float Pitch { get { return -(Vector3.Angle(transform.right, Physics.gravity) - 90); } }
-	public float Roll { get { return -(Vector3.Angle(transform.forward, Physics.gravity) - 90); } }
-	public float Yaw { get {
+	public bool Inverted { get { return transform.up.y < 0; } }
+
+	public float Pitch { get { return -Mathf.Asin(transform.right.y)*Mathf.Rad2Deg; } }
+	public float Roll { 
+		get { 
+			float angle = -Mathf.Asin(transform.forward.y)*Mathf.Rad2Deg;
+			return Inverted ? Mathf.Sign(angle)*180 - angle : angle; 
+		}
+	}
+	public float Yaw { 
+		get {
 			Vector3 proj = Vector3.ProjectOnPlane(transform.right, Vector3.up);
 			float angle = Vector3.Angle(proj, Vector3.right);
 			return Vector3.Angle(proj, Vector3.back) < 90 ? angle : -angle;
 		}
 	}
 
-	public float Altitude { get { return transform.position.y; } } //TODO Modify this to dist over terrain?
+	public float Altitude { get { return transform.position.y; } }
 	public Vector3 Velocity { get { return rb.velocity; } }
 
 	//mode angular rates in deg/s
-	float ACRO_PITCH_RATE = 70f;
-	float ACRO_ROLL_RATE = 70f;
-	float ACRO_YAW_RATE = 200f;
-	float STAB_YAW_RATE = 400f;
+	float ACRO_PITCH_RATE = 150f;
+	float ACRO_ROLL_RATE = 150f;
+	float ACRO_YAW_RATE = 100f;
+	float STAB_YAW_RATE = 100f;
 
 	//STAB mode maximum angles in deg
 	float STAB_PITCH_MAX = 60;
@@ -84,9 +91,10 @@ public class PlayerController : MonoBehaviour {
 		pids[PIDs.ROLL_RATE].kI = 0.00f;
 		pids[PIDs.ROLL_RATE].imax = 10;
 
-		pids[PIDs.YAW_RATE].kP = 2.5f;
+		pids[PIDs.YAW_RATE].kP = 3.0f;
 		pids[PIDs.YAW_RATE].kI = 0.00f;
-		pids[PIDs.YAW_RATE].imax = 50;
+		//pids[PIDs.YAW_RATE].kD = 1.00f;
+		pids[PIDs.YAW_RATE].imax = 10;
 
 		pids[PIDs.PITCH_STAB].kP = 5f;
 		pids[PIDs.PITCH_STAB].kD = .5f;
@@ -104,61 +112,71 @@ public class PlayerController : MonoBehaviour {
 
 	void Update () {
 		input = inputManager.CurrentInput;
+
+		//Update flight modes
 		if(flightMode != input.FlightMode) {
 			if(input.FlightMode == ControlMode.STAB)
 				setYaw = Yaw; //if turning stab mode on, set yaw to current
 			flightMode = input.FlightMode;
 		}
-		flightModeText.text = input.FlightMode.ToString();
 		if(baroMode != input.BaroMode) {
 			setAltitude = Altitude; //if turning baro mode on, set altitude to current
 			baroMode = input.BaroMode;
 		}
 
+		flightModeText.text = string.Format("{0}{1}", baroMode ? "BARO\n" : "", flightMode.ToString());
+
+		//Gyro information
 		Vector3 currentGyro = Mathf.Rad2Deg*transform.InverseTransformDirection(rb.angularVelocity);
 		currentGyro.z = -currentGyro.z;
-		velocityText.text = "(" + Velocity.x + ", " + Velocity.z + ")\nVert.: " + Velocity.y;
-		orientationText.text =  "Actual: " + Altitude + "\nSet: "+ setAltitude + "\nPitch: "
-			+ Pitch + "\nRoll: " + Roll + "\nYaw: " + Yaw + "\nSet: " + setYaw;
 
+		velocityText.text = string.Format("({0:F3}, {1:F3})\nVert.: {2:f3}", Velocity.x, Velocity.z, Velocity.y);
+		orientationText.text =  string.Format("Actual: {0:F3}\nSet: {1:F3}\nPitch: {2:F5}\nRoll: {3:F5}\nYaw: {4:F5}\nSet: {5:F5}",
+												Altitude, setAltitude, Pitch, Roll, Yaw, setYaw);
+
+		//Throttle
 		if(baroMode) {
 			setAltitude += input.Throttle*BARO_RATE*Time.deltaTime;
-			float pid = pids[PIDs.BARO].GetPID(setAltitude - Altitude , maxThrottle/20);
-			throttle = Mathf.Clamp(hoverThrottle + pid, baseThrottle, maxThrottle);
+			if(Inverted)
+				throttle = 0; //No base throttle if flipped
+			else {
+				float pid = pids[PIDs.BARO].GetPID(setAltitude - Altitude , maxThrottle/20); //TODO why scaling factor?
+				throttle = Mathf.Clamp(hoverThrottle + pid, baseThrottle, maxThrottle);
+			}
 		}
 		else
-			throttle = input.Throttle*maxThrottle*1;
+			throttle = input.Throttle*maxThrottle;
 		//throttleText.text = " Throttle: " + throttle;
 
-		//calculate output of PIDs
+		//Pitch, roll, and yaw PIDs
 		float pitchOut = 0, rollOut = 0, yawOut = 0;
 
-		//TODO FIXME yaw turning (stopping specifically) causes altitude gain in stab mode
+		//TODO FIXME yaw turning (reversing direction specifically) causes altitude gain in stab mode
 		if(flightMode == ControlMode.STAB) {
 			//FIXME get these values working so that they can wrap with the pids //Not necessary except for exceptional cases
 			//TODO Autolevel if upside-down in stab mode
-			float pitch_stab_output = pids[PIDs.PITCH_STAB].GetPID(input.Pitch*STAB_PITCH_MAX - Pitch, 1f);
-			float roll_stab_output = pids[PIDs.ROLL_STAB].GetPID(input.Roll*STAB_ROLL_MAX - Roll, 1f);
+			float pitch_stab_output = pids[PIDs.PITCH_STAB].GetPID(input.Pitch*STAB_PITCH_MAX - Pitch);
+			float roll_stab_output = pids[PIDs.ROLL_STAB].GetPID(input.Roll*STAB_ROLL_MAX - Roll);
 			float yaw_stab_output;
 			if(input.Yaw != 0) {
 				yaw_stab_output = input.Yaw*STAB_YAW_RATE;
 				setYaw = Yaw; //TODO change this to be ahead by an amount depending on the turn rate to remove slingshotting
 			} else {
-				yaw_stab_output = pids[PIDs.YAW_STAB].GetPID(AngleDifference180(Yaw, setYaw), 1f);
+				yaw_stab_output = pids[PIDs.YAW_STAB].GetPID(AngleDifference180(Yaw, setYaw));
 			}
 
-			pitchOut = pids[PIDs.PITCH_RATE].GetPID(currentGyro.z - pitch_stab_output, 1f);
-			rollOut = pids[PIDs.ROLL_RATE].GetPID(currentGyro.x - roll_stab_output, 1f);
-			yawOut = pids[PIDs.YAW_RATE].GetPID(currentGyro.y - yaw_stab_output, 1f);
+			pitchOut = pids[PIDs.PITCH_RATE].GetPID(currentGyro.z - pitch_stab_output);
+			rollOut = pids[PIDs.ROLL_RATE].GetPID(currentGyro.x - roll_stab_output);
+			yawOut = pids[PIDs.YAW_RATE].GetPID(currentGyro.y - yaw_stab_output);
 		}
 		else if(flightMode == ControlMode.ACRO) {
-			pitchOut = pids[PIDs.PITCH_RATE].GetPID(currentGyro.z - input.Pitch*ACRO_PITCH_RATE, 1f);
-			rollOut = pids[PIDs.ROLL_RATE].GetPID(currentGyro.x - input.Roll*ACRO_ROLL_RATE, 1f);
-			yawOut = pids[PIDs.YAW_RATE].GetPID(currentGyro.y - input.Yaw*ACRO_YAW_RATE, 1f);
+			pitchOut = pids[PIDs.PITCH_RATE].GetPID(currentGyro.z - input.Pitch*ACRO_PITCH_RATE);
+			rollOut = pids[PIDs.ROLL_RATE].GetPID(currentGyro.x - input.Roll*ACRO_ROLL_RATE);
+			yawOut = pids[PIDs.YAW_RATE].GetPID(currentGyro.y - input.Yaw*ACRO_YAW_RATE);
 		}
 
-		debugText.text = "X: " + input.Roll + "\nY: " + input.Pitch;
-		throttleText.text = "Throttle: " + throttle + " PitchOut: " + pitchOut + " RollOut: " + rollOut + " YawOut: " + yawOut;
+		debugText.text = string.Format("X: {0:F3}\nY: {1:F3}", input.Roll, input.Pitch);
+		throttleText.text = string.Format("Throttle: {0:F0}\tPitchOut: {1:F5}\tRollOut: {2:F5}\tYawOut:{3:F5}", throttle, pitchOut, rollOut, yawOut);
 
 		//Mixer
 
