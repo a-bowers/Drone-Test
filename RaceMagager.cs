@@ -9,6 +9,10 @@ public class RaceMagager : MonoBehaviour {
 	int currentlap = 1;
 	List<bool> GatesPassed = new List<bool>();
 
+	[SerializeField] TreeGenerator NavGenerator;
+
+	OctreeNode NavTree { get { return NavGenerator.Tree; }}
+
 	public int NextGate {
 		get {
 			return GatesPassed.IndexOf(false); //TODO fix this for last gate
